@@ -19,12 +19,11 @@ namespace TextFileSearch
     public partial class FormMain : Form
     {
         Task _searchTask;
-        Task _timerTask;
 
         CancellationTokenSource _cancelSearch = null;
 
         bool _isSerching = false;
-        object _syncRoot = new object();
+        readonly object _syncRoot = new object();
 
         bool IsSearching
         {
@@ -39,7 +38,7 @@ namespace TextFileSearch
             this.MinimumSize = new Size(640, 460);
 
             dataGridViewResults.DefaultCellStyle.Font = new Font("Courier New", 9);
-            dataGridViewResults.CellMouseDoubleClick += dataGridViewResults_CellMouseDoubleClick;
+            dataGridViewResults.CellMouseDoubleClick += DataGridViewResults_CellMouseDoubleClick;
 
             Text += " v" + FileVersionInfo.GetVersionInfo(
                 System.Reflection.Assembly.GetExecutingAssembly().Location)
@@ -48,7 +47,7 @@ namespace TextFileSearch
             SetButtonIdleState();
         }
 
-        void dataGridViewResults_CellMouseDoubleClick(object sender, DataGridViewCellMouseEventArgs e)
+        void DataGridViewResults_CellMouseDoubleClick(object sender, DataGridViewCellMouseEventArgs e)
         {
             if (e.RowIndex == -1) return;
             if (e.Button != MouseButtons.Left) return;
@@ -75,7 +74,7 @@ namespace TextFileSearch
             base.OnClosing(e);
         }
 
-        private void btnBrowse_Click(object sender, EventArgs e)
+        private void BtnBrowse_Click(object sender, EventArgs e)
         {
             VistaFolderBrowserDialog folderBrowserDialog = new VistaFolderBrowserDialog();
             folderBrowserDialog.SelectedPath = txtParentFolderName.Text;
@@ -85,7 +84,7 @@ namespace TextFileSearch
             }
         }
 
-        private void btnSearch_Click(object sender, EventArgs e)
+        private void BtnSearch_Click(object sender, EventArgs e)
         {
             if (!IsSearching)
             {

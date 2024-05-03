@@ -18,9 +18,19 @@ namespace TextFileSearch
 {
     public partial class FormMain : Form
     {
-        VistaFolderBrowserDialog folderBrowserDialog = new VistaFolderBrowserDialog();
-        Thread SearchThread;
-        bool CancelSearch = false;
+        Task _searchTask;
+        Task _timerTask;
+
+        CancellationTokenSource _cancelSearch = null;
+
+        bool _isSerching = false;
+        object _syncRoot = new object();
+
+        bool IsSearching
+        {
+            get { lock(_syncRoot) return _isSerching; }
+            set { lock (_syncRoot) _isSerching = value; }
+        }
 
         public FormMain()
         {
@@ -29,12 +39,13 @@ namespace TextFileSearch
             this.MinimumSize = new Size(640, 460);
 
             dataGridViewResults.DefaultCellStyle.Font = new Font("Courier New", 9);
-
             dataGridViewResults.CellMouseDoubleClick += dataGridViewResults_CellMouseDoubleClick;
 
             Text += " v" + FileVersionInfo.GetVersionInfo(
                 System.Reflection.Assembly.GetExecutingAssembly().Location)
                 .FileVersion;
+
+            SetButtonIdleState();
         }
 
         void dataGridViewResults_CellMouseDoubleClick(object sender, DataGridViewCellMouseEventArgs e)
@@ -54,7 +65,6 @@ namespace TextFileSearch
 
         protected override void OnLoad(EventArgs e)
         {
-            btnCancel.Enabled = false;
             base.OnLoad(e);
         }
 
@@ -67,6 +77,7 @@ namespace TextFileSearch
 
         private void btnBrowse_Click(object sender, EventArgs e)
         {
+            VistaFolderBrowserDialog folderBrowserDialog = new VistaFolderBrowserDialog();
             folderBrowserDialog.SelectedPath = txtParentFolderName.Text;
             if(folderBrowserDialog.ShowDialog() == DialogResult.OK)
             {
@@ -76,30 +87,24 @@ namespace TextFileSearch
 
         private void btnSearch_Click(object sender, EventArgs e)
         {
-            SearchThread = new Thread(() => Search());
-            SearchThread.Start();
+            if (!IsSearching)
+            {
+                StartSearch();
+            }
+            else
+            {
+                StopSearch();
+            }
         }
 
-        void Search()
+        void Search(
+            string parentFolder,
+            string[] fileExtentions,
+            string searchPattern,
+            bool matchCase,
+            bool matchWholeWord,
+            CancellationToken cancel)
         {
-            string parentFolder = string.Empty;
-            string[] fileExtentions = new string[0];
-            string searchPattern = string.Empty;
-            bool matchCase = true;
-            bool matchWholeWord = true;
-            bool cancelSearch = false;
-            Stopwatch stopwatch = Stopwatch.StartNew();
-
-            this.Invoke(new Action(() =>
-            {
-                parentFolder = txtParentFolderName.Text;
-                fileExtentions = txtFileExtentions.Text.Split('|').Select(str => "." + str).ToArray();
-                searchPattern = txtSearchPattern.Text;
-                matchCase = cbMatchCase.Checked;
-                matchWholeWord = cbMatchWholeWord.Checked;
-                cancelSearch = CancelSearch = false;
-            }));
-
             if (!Directory.Exists(parentFolder))
             {
                 MessageBox.Show(string.Format("The directory {0} dose not exist!", parentFolder));
@@ -108,7 +113,7 @@ namespace TextFileSearch
 
             if (fileExtentions.Length == 0)
             {
-                MessageBox.Show("No file extentions!");
+                MessageBox.Show("No file extensions!");
                 return;
             }
 
@@ -120,7 +125,7 @@ namespace TextFileSearch
 
             int matchesFound = 0;
 
-            this.Invoke(new Action(() =>
+            this.BeginInvoke(new Action(() =>
             {
                 SetButtonBusyState();
                 txtMatchesFound.Clear();
@@ -156,7 +161,7 @@ namespace TextFileSearch
 
                     foreach (string file in files)
                     {
-                        this.Invoke(new Action(() =>
+                        this.BeginInvoke(new Action(() =>
                         {
                             if (newFileResult != null)
                             {
@@ -172,15 +177,9 @@ namespace TextFileSearch
                             txtStatus.Text = "Searching... \r\n" + file;
                             txtMatchesFound.Text = matchesFound.ToString();
                             txtFillesWitheMatches.Text = fileResults.Count.ToString();
-                            int totalSec = (int)stopwatch.ElapsedMilliseconds / 1000;
-                            int h = totalSec / 3600;
-                            int m = (totalSec / 60) % 60;
-                            int s = totalSec % 60;
-                            txtSerchTime.Text = string.Format("{0:00}:{1:00}:{2:00}", h, m, s);
-                            cancelSearch = CancelSearch;
                         }));
 
-                        if (cancelSearch) break;
+                        if (cancel.IsCancellationRequested) break;
 
                         newFileResult = TextSearcher.SearchTextInFile(file, searchPattern, matchCase, matchWholeWord);
                         if (newFileResult != null)
@@ -192,7 +191,7 @@ namespace TextFileSearch
                 }
                 catch { }
 
-                if (cancelSearch) break;
+                if (cancel.IsCancellationRequested) break;
 
                 try
                 {
@@ -205,9 +204,9 @@ namespace TextFileSearch
                 catch { }
             }
 
-            this.Invoke(new Action(() =>
+            this.BeginInvoke(new Action(() =>
             {
-                if (SearchThread.IsAlive)
+                if (IsSearching)
                 {
                     if (newFileResult != null)
                     {
@@ -222,17 +221,9 @@ namespace TextFileSearch
                     // Update state: search canceld\completed, total time, matches found.
                     txtMatchesFound.Text = matchesFound.ToString();
                     txtFillesWitheMatches.Text = fileResults.Count.ToString();
-                    int totalSec = (int)stopwatch.ElapsedMilliseconds / 1000;
-                    int h = totalSec / 3600;
-                    int m = (totalSec / 60) % 60;
-                    int s = totalSec % 60;
-                    txtSerchTime.Text = string.Format("{0:00}:{1:00}:{2:00}", h, m, s);
 
                     string status = string.Empty;
-                    if (CancelSearch)
-                        status = "Search Canceled.";
-                    else
-                        status = "Search Compleated.";
+                    status = cancel.IsCancellationRequested ? "Search Canceled." : "Search Completed.";
 
                     status += string.Format(
                             " {0} matches found. Total time {1}",
@@ -243,15 +234,15 @@ namespace TextFileSearch
                 }
                 
                 SetButtonIdleState();
-
             }));
-            
         }
 
         private void SetButtonIdleState()
         {
-            btnSearch.Enabled = true;
-            btnCancel.Enabled = false;
+            btnSearch.Text = "Start";
+            btnSearch.BackColor = Color.Green;
+            btnSearch.BackColor = Color.FromArgb(100, 255, 100);
+            btnSearch.ForeColor = Color.FromArgb(0, 100, 0);
             btnBrowse.Enabled = true;
             cbMatchCase.Enabled = true;
             cbMatchWholeWord.Enabled = true;
@@ -262,8 +253,9 @@ namespace TextFileSearch
 
         private void SetButtonBusyState()
         {
-            btnSearch.Enabled = false;
-            btnCancel.Enabled = true;
+            btnSearch.Text = "Stop";
+            btnSearch.BackColor = Color.FromArgb(255, 100, 100);
+            btnSearch.ForeColor = Color.FromArgb(96, 0, 0);
             btnBrowse.Enabled = false;
             cbMatchCase.Enabled = false;
             cbMatchWholeWord.Enabled = false;
@@ -276,22 +268,57 @@ namespace TextFileSearch
 
         }
 
-        void StopSearch()
+        private void StartSearch()
         {
-            CancelSearch = true;
-            if (SearchThread != null)
+            _cancelSearch = new CancellationTokenSource();
+            IsSearching = true;
+
+            _searchTask = Task.Factory.StartNew(() =>  Search(
+                txtParentFolderName.Text,
+                txtFileExtentions.Text.Split('|').Select(str => "." + str).ToArray(),
+                txtSearchPattern.Text,
+                cbMatchCase.Checked,
+                cbMatchWholeWord.Checked,
+                _cancelSearch.Token), 
+                _cancelSearch.Token);
+
+            Task.Factory.StartNew(() =>
             {
-                while (SearchThread.IsAlive)
+                Stopwatch stopwatch = Stopwatch.StartNew();
+
+                while (IsSearching)
                 {
-                    Application.DoEvents();
-                    Thread.Sleep(10);
+                    Thread.Sleep(50);
+                    this.BeginInvoke(new Action(() =>
+                    {
+                        int totalSec = (int)stopwatch.ElapsedMilliseconds / 1000;
+                        int h = totalSec / 3600;
+                        int m = (totalSec / 60) % 60;
+                        int s = totalSec % 60;
+                        txtSerchTime.Text = string.Format("{0:00}:{1:00}:{2:00}", h, m, s);
+                    }));
                 }
-            }
+            },
+            _cancelSearch.Token);
         }
 
-        private void btnCancel_Click(object sender, EventArgs e)
+        void StopSearch()
         {
-            StopSearch();
+            Cursor.Current = Cursors.WaitCursor;
+            if (_searchTask != null)
+            {
+                _cancelSearch.Cancel();
+                while (_searchTask.Status == TaskStatus.Running)
+                {
+                    Thread.Sleep(10);
+                }
+                _cancelSearch.Dispose();
+                _searchTask.Dispose();
+            }
+            _searchTask = null;
+            _cancelSearch = null;
+            IsSearching = false;
+            Cursor.Current = Cursors.Default;
         }
     }
 }

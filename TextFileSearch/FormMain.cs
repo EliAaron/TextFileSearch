@@ -127,7 +127,8 @@ namespace TextFileSearch
             this.BeginInvoke(new Action(() =>
             {
                 SetButtonBusyState();
-                txtMatchesFound.Clear();
+                txtMatchesFound.Text = "0";
+                txtFillesWitheMatches.Text = "0";
                 txtStatus.Clear();
                 txtStatus.Text = "Searching...";
                 dataGridViewResults.Rows.Clear();
@@ -195,7 +196,7 @@ namespace TextFileSearch
                 try
                 {
                     // Add subfolders of the current folder. 
-                    // The folders are retrived in an accending order bot are used last first (FIFO) so the order is reversed.
+                    // The folders are retrieved in an ascending order bot are used last first (FIFO) so the order is reversed.
                     folderStack.AddRange(
                         Directory.EnumerateDirectories(folder, "*", SearchOption.TopDirectoryOnly).Reverse());
 
@@ -217,7 +218,7 @@ namespace TextFileSearch
                         }
                     }
 
-                    // Update state: search canceld\completed, total time, matches found.
+                    // Update state: search canceled\completed, total time, matches found.
                     txtMatchesFound.Text = matchesFound.ToString();
                     txtFillesWitheMatches.Text = fileResults.Count.ToString();
 
